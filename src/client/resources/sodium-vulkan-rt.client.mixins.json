@@ -1,0 +1,15 @@
+{
+	"required": true,
+	"package": "sodiumrt.client.mixin",
+	"compatibilityLevel": "JAVA_25",
+	"client": [
+		"SodiumVulkanPipelineMixin",
+		"ChunkMeshVulkanBufferMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	},
+	"overwrites": {
+		"requireAnnotations": true
+	}
+}
