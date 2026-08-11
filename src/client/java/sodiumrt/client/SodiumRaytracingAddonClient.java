@@ -10,6 +10,7 @@ import sodiumrt.SodiumRaytracingAddon;
 import sodiumrt.client.raytracing.VulkanAccelerationStructure;
 import sodiumrt.client.raytracing.VulkanRaytracingPipeline;
 
+import java.nio.IntBuffer;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -81,6 +82,54 @@ public class SodiumRaytracingAddonClient implements ClientModInitializer {
 			if (result == VK_SUCCESS) {
 				vkInstance = new VkInstance(pInstance.get(0), createInfo);
 				SodiumRaytracingAddon.LOGGER.info("[Sodium RT Addon] Vulkan instance created successfully!");
+
+				// Enumerate physical devices and pick the primary GPU
+				IntBuffer pDeviceCount = stack.mallocInt(1);
+				vkEnumeratePhysicalDevices(vkInstance, pDeviceCount, null);
+				if (pDeviceCount.get(0) > 0) {
+					PointerBuffer pPhysicalDevices = stack.mallocPointer(pDeviceCount.get(0));
+					vkEnumeratePhysicalDevices(vkInstance, pDeviceCount, pPhysicalDevices);
+					vkPhysicalDevice = new VkPhysicalDevice(pPhysicalDevices.get(0), vkInstance);
+
+					// Create logical Vulkan device
+					VkDeviceQueueCreateInfo.Buffer queueCreateInfo = VkDeviceQueueCreateInfo.calloc(1, stack)
+						.sType$Default()
+						.queueFamilyIndex(0)
+						.pQueuePriorities(stack.floats(1.0f));
+
+					PointerBuffer extensions = stack.pointers(
+						stack.UTF8(KHRRayTracingPipeline.VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME),
+						stack.UTF8(KHRAccelerationStructure.VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME),
+						stack.UTF8(KHRBufferDeviceAddress.VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME),
+						stack.UTF8(KHRDeferredHostOperations.VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME)
+					);
+
+					VkPhysicalDeviceBufferDeviceAddressFeatures bdaFeatures = VkPhysicalDeviceBufferDeviceAddressFeatures.calloc(stack)
+						.sType(VK12.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES)
+						.bufferDeviceAddress(true);
+
+					VkPhysicalDeviceAccelerationStructureFeaturesKHR asFeatures = VkPhysicalDeviceAccelerationStructureFeaturesKHR.calloc(stack)
+						.sType(KHRAccelerationStructure.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR)
+						.accelerationStructure(true)
+						.pNext(bdaFeatures.address());
+
+					VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtFeatures = VkPhysicalDeviceRayTracingPipelineFeaturesKHR.calloc(stack)
+						.sType(KHRRayTracingPipeline.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR)
+						.rayTracingPipeline(true)
+						.pNext(asFeatures.address());
+
+					VkDeviceCreateInfo deviceCreateInfo = VkDeviceCreateInfo.calloc(stack)
+						.sType$Default()
+						.pQueueCreateInfos(queueCreateInfo)
+						.ppEnabledExtensionNames(extensions)
+						.pNext(rtFeatures.address());
+
+					PointerBuffer pDevice = stack.mallocPointer(1);
+					if (vkCreateDevice(vkPhysicalDevice, deviceCreateInfo, null, pDevice) == VK_SUCCESS) {
+						vkDevice = new VkDevice(pDevice.get(0), vkPhysicalDevice, deviceCreateInfo);
+						SodiumRaytracingAddon.LOGGER.info("[Sodium RT Addon] Logical Vulkan device initialized successfully!");
+					}
+				}
 			} else {
 				SodiumRaytracingAddon.LOGGER.warn("[Sodium RT Addon] vkCreateInstance returned status: " + result);
 			}
@@ -111,8 +160,12 @@ public class SodiumRaytracingAddonClient implements ClientModInitializer {
 	}
 
 	private void renderRaytracedFrame() {
-		if (!activeBlasAddresses.isEmpty()) {
-			// Trigger TLAS acceleration structure update for loaded chunks
+		if (!activeBlasAddresses.isEmpty() && vkDevice != null) {
+			long[] blasArray = activeBlasAddresses.stream().mapToLong(Long::longValue).toArray();
+			accelerationStructure.buildTLAS(vkDevice, activeBlasAddresses);
+			if (accelerationStructure.getTLASHandle() != 0) {
+				raytracingPipeline.dispatchRayTrace(null, 1920, 1080);
+			}
 		}
 	}
 }

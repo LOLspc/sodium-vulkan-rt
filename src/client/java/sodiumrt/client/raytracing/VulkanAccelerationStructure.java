@@ -89,7 +89,7 @@ public class VulkanAccelerationStructure {
     }
 
     public void buildTLAS(VkDevice device, List<Long> instanceBlasAddresses) {
-        if (instanceBlasAddresses.isEmpty()) return;
+        if (device == null || instanceBlasAddresses == null || instanceBlasAddresses.isEmpty()) return;
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
             int instanceCount = instanceBlasAddresses.size();
