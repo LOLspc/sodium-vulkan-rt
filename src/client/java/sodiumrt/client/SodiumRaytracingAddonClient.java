@@ -10,6 +10,7 @@ import sodiumrt.SodiumRaytracingAddon;
 import sodiumrt.client.raytracing.VulkanAccelerationStructure;
 import sodiumrt.client.raytracing.VulkanRaytracingPipeline;
 
+import java.nio.IntBuffer;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -81,6 +82,31 @@ public class SodiumRaytracingAddonClient implements ClientModInitializer {
 			if (result == VK_SUCCESS) {
 				vkInstance = new VkInstance(pInstance.get(0), createInfo);
 				SodiumRaytracingAddon.LOGGER.info("[Sodium RT Addon] Vulkan instance created successfully!");
+
+				// Enumerate physical devices and pick the primary GPU
+				IntBuffer pDeviceCount = stack.mallocInt(1);
+				vkEnumeratePhysicalDevices(vkInstance, pDeviceCount, null);
+				if (pDeviceCount.get(0) > 0) {
+					PointerBuffer pPhysicalDevices = stack.mallocPointer(pDeviceCount.get(0));
+					vkEnumeratePhysicalDevices(vkInstance, pDeviceCount, pPhysicalDevices);
+					vkPhysicalDevice = new VkPhysicalDevice(pPhysicalDevices.get(0), vkInstance);
+
+					// Create logical Vulkan device
+					VkDeviceQueueCreateInfo.Buffer queueCreateInfo = VkDeviceQueueCreateInfo.calloc(1, stack)
+						.sType$Default()
+						.queueFamilyIndex(0)
+						.pQueuePriorities(stack.floats(1.0f));
+
+					VkDeviceCreateInfo deviceCreateInfo = VkDeviceCreateInfo.calloc(stack)
+						.sType$Default()
+						.pQueueCreateInfos(queueCreateInfo);
+
+					PointerBuffer pDevice = stack.mallocPointer(1);
+					if (vkCreateDevice(vkPhysicalDevice, deviceCreateInfo, null, pDevice) == VK_SUCCESS) {
+						vkDevice = new VkDevice(pDevice.get(0), vkPhysicalDevice, deviceCreateInfo);
+						SodiumRaytracingAddon.LOGGER.info("[Sodium RT Addon] Logical Vulkan device initialized successfully!");
+					}
+				}
 			} else {
 				SodiumRaytracingAddon.LOGGER.warn("[Sodium RT Addon] vkCreateInstance returned status: " + result);
 			}
@@ -111,8 +137,12 @@ public class SodiumRaytracingAddonClient implements ClientModInitializer {
 	}
 
 	private void renderRaytracedFrame() {
-		if (!activeBlasAddresses.isEmpty()) {
-			// Trigger TLAS acceleration structure update for loaded chunks
+		if (!activeBlasAddresses.isEmpty() && vkDevice != null) {
+			long[] blasArray = activeBlasAddresses.stream().mapToLong(Long::longValue).toArray();
+			long tlasHandle = accelerationStructure.buildTLAS(vkDevice, blasArray);
+			if (tlasHandle != 0) {
+				raytracingPipeline.dispatchRayTrace(null, 1920, 1080);
+			}
 		}
 	}
 }
