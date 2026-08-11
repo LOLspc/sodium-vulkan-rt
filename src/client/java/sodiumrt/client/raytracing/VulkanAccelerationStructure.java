@@ -11,6 +11,9 @@ import static org.lwjgl.vulkan.VK10.*;
 import static org.lwjgl.vulkan.KHRRayTracingPipeline.*;
 import static org.lwjgl.vulkan.KHRAccelerationStructure.*;
 import static org.lwjgl.vulkan.KHRBufferDeviceAddress.*;
+import static org.lwjgl.vulkan.VK11.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+import static org.lwjgl.vulkan.VK12.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+import static org.lwjgl.vulkan.VK12.VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
 
 public class VulkanAccelerationStructure {
     private long topLevelAS = VK_NULL_HANDLE;
@@ -70,21 +73,16 @@ public class VulkanAccelerationStructure {
                 VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR
             );
 
-            long scratchBuffer = createScratchBuffer(device, sizeInfo.buildScratchSize());
-            long scratchAddress = getBufferDeviceAddress(device, scratchBuffer);
+            ScratchBuffer scratch = createScratchBuffer(device, sizeInfo.buildScratchSize());
 
             buildInfo.dstAccelerationStructure(blas.handle);
-            buildInfo.scratchData().deviceAddress(scratchAddress);
-
-            VkAccelerationStructureBuildRangeInfoKHR.Buffer buildRange = VkAccelerationStructureBuildRangeInfoKHR.calloc(1, stack)
-                .primitiveCount(primitiveCount)
-                .primitiveOffset(0)
-                .firstVertex(0)
-                .transformOffset(0);
+            buildInfo.scratchData().deviceAddress(scratch.deviceAddress);
 
             blasHandles.add(blas.handle);
             blasBuffers.add(blas.buffer);
             blasMemories.add(blas.memory);
+
+            destroyScratchBuffer(device, scratch);
 
             return blas;
         }
@@ -99,9 +97,10 @@ public class VulkanAccelerationStructure {
 
             for (int i = 0; i < instanceCount; i++) {
                 VkAccelerationStructureInstanceKHR instance = instances.get(i);
-                instance.transform().matrix(0, 0, 1.0f);
-                instance.transform().matrix(1, 1, 1.0f);
-                instance.transform().matrix(2, 2, 1.0f);
+                instance.transform()
+                    .matrix( 0, 1.0f)
+                    .matrix( 1, 1.0f)
+                    .matrix( 2, 1.0f);
                 
                 instance.instanceCustomIndex(i);
                 instance.mask(0xFF);
@@ -204,7 +203,14 @@ public class VulkanAccelerationStructure {
         return obj;
     }
 
-    private long createScratchBuffer(VkDevice device, long size) {
+    private static class ScratchBuffer {
+        long buffer;
+        long memory;
+        long deviceAddress;
+    }
+
+    private ScratchBuffer createScratchBuffer(VkDevice device, long size) {
+        ScratchBuffer scratch = new ScratchBuffer();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkBufferCreateInfo bufferInfo = VkBufferCreateInfo.calloc(stack)
                 .sType(VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO)
@@ -214,14 +220,44 @@ public class VulkanAccelerationStructure {
 
             LongBuffer pBuffer = stack.mallocLong(1);
             vkCreateBuffer(device, bufferInfo, null, pBuffer);
-            return pBuffer.get(0);
+            scratch.buffer = pBuffer.get(0);
+
+            VkMemoryRequirements memReqs = VkMemoryRequirements.calloc(stack);
+            vkGetBufferMemoryRequirements(device, scratch.buffer, memReqs);
+
+            VkMemoryAllocateInfo allocInfo = VkMemoryAllocateInfo.calloc(stack)
+                .sType(VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO)
+                .allocationSize(memReqs.size());
+
+            VkMemoryAllocateFlagsInfo flagsInfo = VkMemoryAllocateFlagsInfo.calloc(stack)
+                .sType(VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO)
+                .flags(VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT);
+            allocInfo.pNext(flagsInfo.address());
+
+            LongBuffer pMemory = stack.mallocLong(1);
+            vkAllocateMemory(device, allocInfo, null, pMemory);
+            scratch.memory = pMemory.get(0);
+
+            vkBindBufferMemory(device, scratch.buffer, scratch.memory, 0);
+
+            scratch.deviceAddress = getBufferDeviceAddress(device, scratch.buffer);
+        }
+        return scratch;
+    }
+
+    private void destroyScratchBuffer(VkDevice device, ScratchBuffer scratch) {
+        if (scratch.buffer != VK_NULL_HANDLE) {
+            vkDestroyBuffer(device, scratch.buffer, null);
+        }
+        if (scratch.memory != VK_NULL_HANDLE) {
+            vkFreeMemory(device, scratch.memory, null);
         }
     }
 
     private long getBufferDeviceAddress(VkDevice device, long buffer) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkBufferDeviceAddressInfo info = VkBufferDeviceAddressInfo.calloc(stack)
-                .sType(VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO)
+                .sType(VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO_KHR)
                 .buffer(buffer);
             return vkGetBufferDeviceAddressKHR(device, info);
         }
@@ -247,3 +283,4 @@ public class VulkanAccelerationStructure {
         blasMemories.clear();
     }
 }
+
