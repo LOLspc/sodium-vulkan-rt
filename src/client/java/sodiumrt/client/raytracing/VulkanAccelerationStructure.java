@@ -98,9 +98,9 @@ public class VulkanAccelerationStructure {
             for (int i = 0; i < instanceCount; i++) {
                 VkAccelerationStructureInstanceKHR instance = instances.get(i);
                 instance.transform()
-                    .matrix( 0, 1.0f)
-                    .matrix( 1, 1.0f)
-                    .matrix( 2, 1.0f);
+                    .matrix(0, 1.0f)
+                    .matrix(5, 1.0f)
+                    .matrix(10, 1.0f);
                 
                 instance.instanceCustomIndex(i);
                 instance.mask(0xFF);

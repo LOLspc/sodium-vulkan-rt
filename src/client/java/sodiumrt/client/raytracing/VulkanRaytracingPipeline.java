@@ -207,7 +207,7 @@ public class VulkanRaytracingPipeline {
 
         for (int i = 0; i < groupCount; i++) {
             long dest = mappedAddress + (long) i * handleSizeAligned;
-            long src = handles.address() + (long) i * handleSize;
+            long src = org.lwjgl.system.MemoryUtil.memAddress(handles) + (long) i * handleSize;
             org.lwjgl.system.MemoryUtil.memCopy(src, dest, handleSize);
         }
         vkUnmapMemory(device, sbtMemory);
