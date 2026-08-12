@@ -10,12 +10,19 @@ import sodiumrt.SodiumRaytracingAddon;
 @Pseudo
 @Mixin(targets = {
     "me.jellysquid.mods.sodium.client.render.SodiumWorldRenderer",
-    "net.caffeinemc.sodium.client.render.SodiumWorldRenderer"
+    "net.caffeinemc.sodium.client.render.SodiumWorldRenderer",
+    "net.minecraft.client.renderer.LevelRenderer",
+    "net.minecraft.client.render.WorldRenderer"
 }, remap = false)
 public class SodiumVulkanPipelineMixin {
 
     @Inject(method = "loadWorld", at = @At("TAIL"), require = 0)
     private void onWorldLoad(CallbackInfo ci) {
         SodiumRaytracingAddon.LOGGER.info("[Sodium RT Addon] Initialized Vulkan Raytracing Pipeline on Sodium Render World load.");
+    }
+
+    @Inject(method = "renderWorld", at = @At("TAIL"), require = 0)
+    private void onRenderWorld(CallbackInfo ci) {
+        sodiumrt.client.SodiumRaytracingAddonClient.renderRaytracedFrame();
     }
 }

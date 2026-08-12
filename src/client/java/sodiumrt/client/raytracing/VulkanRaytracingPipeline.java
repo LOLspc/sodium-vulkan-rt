@@ -30,7 +30,50 @@ public class VulkanRaytracingPipeline {
     private final VkStridedDeviceAddressRegionKHR hitSbtRegion = VkStridedDeviceAddressRegionKHR.create();
     private final VkStridedDeviceAddressRegionKHR callableSbtRegion = VkStridedDeviceAddressRegionKHR.create();
 
+    public void initPipeline(VkDevice device, VkPhysicalDevice physicalDevice) {
+        long rgenModule = createShaderModule(device, loadShaderBytes("/assets/sodium-vulkan-rt/shaders/rt_pipeline.rgen.spv"));
+        long rchitModule = createShaderModule(device, loadShaderBytes("/assets/sodium-vulkan-rt/shaders/rt_pipeline.rchit.spv"));
+        long rmissModule = createShaderModule(device, loadShaderBytes("/assets/sodium-vulkan-rt/shaders/rt_pipeline.rmiss.spv"));
+
+        if (rgenModule == 0 || rchitModule == 0 || rmissModule == 0) {
+            sodiumrt.SodiumRaytracingAddon.LOGGER.error("[Sodium RT Addon] Shader modules could not be created from resources. Aborting pipeline creation.");
+            return;
+        }
+
+        initPipeline(physicalDevice, device, rgenModule, rchitModule, rmissModule);
+    }
+
+    public static long createShaderModule(VkDevice device, byte[] code) {
+        if (code == null || code.length == 0 || device == null) return 0L;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            ByteBuffer buffer = stack.malloc(code.length);
+            buffer.put(code);
+            buffer.flip();
+
+            VkShaderModuleCreateInfo createInfo = VkShaderModuleCreateInfo.calloc(stack)
+                .sType(VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO)
+                .pCode(buffer);
+
+            LongBuffer pShaderModule = stack.mallocLong(1);
+            if (vkCreateShaderModule(device, createInfo, null, pShaderModule) == VK_SUCCESS) {
+                return pShaderModule.get(0);
+            }
+            return 0L;
+        }
+    }
+
+    private static byte[] loadShaderBytes(String path) {
+        try (java.io.InputStream in = VulkanRaytracingPipeline.class.getResourceAsStream(path)) {
+            if (in != null) return in.readAllBytes();
+        } catch (Exception ignored) {}
+        return new byte[0];
+    }
+
     public void initPipeline(VkPhysicalDevice physicalDevice, VkDevice device, long rgenShaderModule, long rchitShaderModule, long rmissShaderModule) {
+        if (device == null || physicalDevice == null || rgenShaderModule == 0 || rchitShaderModule == 0 || rmissShaderModule == 0) {
+            sodiumrt.SodiumRaytracingAddon.LOGGER.error("[Sodium RT Addon] Invalid handles passed to initPipeline. Skipping pipeline creation.");
+            return;
+        }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             // 1. Descriptor set layout: Binding 0 (TLAS), Binding 1 (Storage Image), Binding 2 (Camera Uniform)
             VkDescriptorSetLayoutBinding.Buffer bindings = VkDescriptorSetLayoutBinding.calloc(3, stack);
@@ -186,7 +229,8 @@ public class VulkanRaytracingPipeline {
 
         VkMemoryAllocateInfo allocInfo = VkMemoryAllocateInfo.calloc(stack)
             .sType(VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO)
-            .allocationSize(memReqs.size());
+            .allocationSize(memReqs.size())
+            .memoryTypeIndex(findMemoryType(physicalDevice, memReqs.memoryTypeBits(), VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
 
         VkMemoryAllocateFlagsInfo flagsInfo = VkMemoryAllocateFlagsInfo.calloc(stack)
             .sType(VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO)
@@ -316,6 +360,21 @@ public class VulkanRaytracingPipeline {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, pipelineLayout, 0, stack.longs(descriptorSet), null);
             vkCmdTraceRaysKHR(commandBuffer, raygenSbtRegion, missSbtRegion, hitSbtRegion, callableSbtRegion, width, height, 1);
+        }
+    }
+
+    public static int findMemoryType(VkPhysicalDevice physicalDevice, int typeFilter, int properties) {
+        if (physicalDevice == null) return 0;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkPhysicalDeviceMemoryProperties memProperties = VkPhysicalDeviceMemoryProperties.calloc(stack);
+            vkGetPhysicalDeviceMemoryProperties(physicalDevice, memProperties);
+
+            for (int i = 0; i < memProperties.memoryTypeCount(); i++) {
+                if ((typeFilter & (1 << i)) != 0 && (memProperties.memoryTypes(i).propertyFlags() & properties) == properties) {
+                    return i;
+                }
+            }
+            return 0;
         }
     }
 

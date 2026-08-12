@@ -2,6 +2,7 @@ package sodiumrt.client.raytracing;
 
 import org.lwjgl.vulkan.*;
 import org.lwjgl.system.MemoryStack;
+import sodiumrt.client.SodiumRaytracingAddonClient;
 
 import java.nio.LongBuffer;
 import java.util.ArrayList;
@@ -88,8 +89,8 @@ public class VulkanAccelerationStructure {
         }
     }
 
-    public void buildTLAS(VkDevice device, List<Long> instanceBlasAddresses) {
-        if (instanceBlasAddresses.isEmpty()) return;
+    public long buildTLAS(VkDevice device, List<Long> instanceBlasAddresses) {
+        if (device == null || instanceBlasAddresses == null || instanceBlasAddresses.isEmpty()) return 0L;
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
             int instanceCount = instanceBlasAddresses.size();
@@ -145,7 +146,15 @@ public class VulkanAccelerationStructure {
             this.topLevelAS = tlas.handle;
             this.topLevelASBuffer = tlas.buffer;
             this.topLevelASMemory = tlas.memory;
+            return this.topLevelAS;
         }
+    }
+
+    public long buildTLAS(VkDevice device, long[] instanceBlasAddresses) {
+        if (instanceBlasAddresses == null) return 0L;
+        List<Long> list = new ArrayList<>();
+        for (long addr : instanceBlasAddresses) list.add(addr);
+        return buildTLAS(device, list);
     }
 
     private AccelerationStructureObject createAccelerationStructureBuffer(VkDevice device, long size, int type) {
@@ -168,7 +177,8 @@ public class VulkanAccelerationStructure {
 
             VkMemoryAllocateInfo allocInfo = VkMemoryAllocateInfo.calloc(stack)
                 .sType(VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO)
-                .allocationSize(memReqs.size());
+                .allocationSize(memReqs.size())
+                .memoryTypeIndex(findMemoryType(SodiumRaytracingAddonClient.vkPhysicalDevice, memReqs.memoryTypeBits(), VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT));
 
             VkMemoryAllocateFlagsInfo flagsInfo = VkMemoryAllocateFlagsInfo.calloc(stack)
                 .sType(VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO)
@@ -227,7 +237,8 @@ public class VulkanAccelerationStructure {
 
             VkMemoryAllocateInfo allocInfo = VkMemoryAllocateInfo.calloc(stack)
                 .sType(VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO)
-                .allocationSize(memReqs.size());
+                .allocationSize(memReqs.size())
+                .memoryTypeIndex(findMemoryType(SodiumRaytracingAddonClient.vkPhysicalDevice, memReqs.memoryTypeBits(), VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT));
 
             VkMemoryAllocateFlagsInfo flagsInfo = VkMemoryAllocateFlagsInfo.calloc(stack)
                 .sType(VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO)
@@ -260,6 +271,21 @@ public class VulkanAccelerationStructure {
                 .sType(VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO_KHR)
                 .buffer(buffer);
             return vkGetBufferDeviceAddressKHR(device, info);
+        }
+    }
+
+    public static int findMemoryType(VkPhysicalDevice physicalDevice, int typeFilter, int properties) {
+        if (physicalDevice == null) return 0;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkPhysicalDeviceMemoryProperties memProperties = VkPhysicalDeviceMemoryProperties.calloc(stack);
+            vkGetPhysicalDeviceMemoryProperties(physicalDevice, memProperties);
+
+            for (int i = 0; i < memProperties.memoryTypeCount(); i++) {
+                if ((typeFilter & (1 << i)) != 0 && (memProperties.memoryTypes(i).propertyFlags() & properties) == properties) {
+                    return i;
+                }
+            }
+            return 0;
         }
     }
 
